@@ -1,0 +1,53 @@
+{
+  "name": "opnscad-language-support",
+  "displayName": "opnscad-language-support",
+  "description": "OpenScad language support for vscode.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.44.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:scad"
+  ],
+  "main": "./client/out/extension",
+  "contributes": {
+    "languages": [
+      {
+        "id": "scad",
+        "aliases": [
+          "OpenScad",
+          "scad"
+        ],
+        "extensions": [
+          ".scad"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "scad",
+        "scopeName": "source.scad",
+        "path": "./syntaxes/scad.tmLanguage"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+    "test": "sh ./scripts/e2e.sh"
+  },
+  "devDependencies": {
+    "@types/mocha": "^5.2.7",
+    "mocha": "^6.2.2",
+    "@types/node": "^12.12.0",
+    "eslint": "^6.4.0",
+    "@typescript-eslint/parser": "^2.3.0",
+    "typescript": "^3.8.3"
+  }
+}
