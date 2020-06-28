@@ -35,6 +35,7 @@ import {
   CompletionType,
   PreludeUtil,
   SolutionManager,
+  SymbolKind as ScadSymbolKind,
 } from "openscad-parser";
 import { uriToFilePath } from "vscode-languageserver/lib/files";
 
@@ -155,20 +156,20 @@ const solutionManager = new SolutionManager();
 // Only keep settings for open documents
 documents.onDidClose((e) => {
   documentSettings.delete(e.document.uri);
-  solutionManager.notifyFileClosed(uriToPath(e.document.uri), "xD");
+  solutionManager.notifyFileClosed(uriToPath(e.document.uri));
 });
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent((change) => {
-  if (!solutionManager.getFile(change.document.uri)) {
+  if (!solutionManager.getFile(uriToPath(change.document.uri))) {
     solutionManager.notifyNewFileOpened(
-      change.document.uri,
+      uriToPath(change.document.uri),
       change.document.getText()
     );
   } else {
     solutionManager.notifyFileChanged(
-      change.document.uri,
+      uriToPath(change.document.uri),
       change.document.getText()
     );
   }
@@ -237,7 +238,10 @@ connection.onCompletion((pos: TextDocumentPositionParams): CompletionItem[] => {
       }
       charsBeforeTheLine++;
     }
-    const fullOffset = charsBeforeTheLine + pos.position.character;
+    let fullOffset = charsBeforeTheLine + pos.position.character;
+    if (fullOffset >= text.length) {
+      fullOffset = text.length > 0 ? text.length - 1 : 0;
+    }
     const loc = new CodeLocation(
       codeFile,
       fullOffset,
@@ -277,83 +281,58 @@ connection.onCompletion((pos: TextDocumentPositionParams): CompletionItem[] => {
 });
 
 connection.onDocumentFormatting((params) => {
+  const f = solutionManager.getFile(uriToPath(params.textDocument.uri));
+  if (f.errors.length > 0) {
+    return [];
+  }
   const document = documents.get(params.textDocument.uri);
   if (!document) {
     throw new Error("No document!");
   }
-  const file = new CodeFile(document.uri, document.getText());
-  const [ast, ec] = ParsingHelper.parseFile(file);
-  ec.throwIfAny();
   return [
     TextEdit.replace(
       Range.create(
         Position.create(0, 0),
         document.positionAt(document.getText().length)
       ),
-      new ASTPrinter(new FormattingConfiguration()).visitScadFile(ast!)
+      f.getFormatted()
     ),
   ];
 });
 
 connection.onDocumentSymbol((params) => {
-  console.log("xD");
-  const document = documents.get(params.textDocument.uri);
-  if (!document) {
-    throw new Error("No document!");
-  }
-  const file = new CodeFile(document.uri, document.getText());
-  const [ast, ec] = ParsingHelper.parseFile(file);
-  if (ec.hasErrors()) {
-    return [];
-  }
-  const s = new Scope();
-  new ASTScopePopulator(s).visitScadFile(ast!);
-  const symbols: DocumentSymbol[] = [];
-  console.log(s.modules);
-  s.modules.forEach((mod) => {
-    symbols.push(
-      DocumentSymbol.create(
-        mod.name,
-        undefined,
-        SymbolKind.Module,
-        Range.create(
-          mod.tokens.moduleKeyword.pos.line,
-          mod.tokens.moduleKeyword.pos.col,
-          mod.stmt.pos.line,
-          mod.stmt.pos.col
-        ),
-        Range.create(
-          mod.tokens.name.pos.line,
-          mod.tokens.name.pos.col,
-          mod.tokens.name.end.line,
-          mod.tokens.name.end.col
-        )
-      )
+  return solutionManager
+    .getFile(uriToPath(params.textDocument.uri))
+    .getSymbols<DocumentSymbol>(
+      (name, kind, fullRange, nameRange, children) => {
+        let k: SymbolKind;
+        switch (kind) {
+          case ScadSymbolKind.FUNCTION:
+            k = SymbolKind.Function;
+            break;
+          case ScadSymbolKind.MODULE:
+            k = SymbolKind.Module;
+            break;
+          case ScadSymbolKind.VARIABLE:
+            k = SymbolKind.Variable;
+            break;
+        }
+        return DocumentSymbol.create(
+          name,
+          undefined,
+          k,
+          Range.create(
+            Position.create(fullRange.start.line, fullRange.start.col),
+            Position.create(fullRange.end.line, fullRange.end.col)
+          ),
+          Range.create(
+            Position.create(nameRange.start.line, nameRange.start.col),
+            Position.create(nameRange.end.line, nameRange.end.col)
+          ),
+          children
+        );
+      }
     );
-  });
-  s.functions.forEach((mod) => {
-    symbols.push(
-      DocumentSymbol.create(
-        mod.name,
-        undefined,
-        SymbolKind.Function,
-        Range.create(
-          mod.tokens.functionKeyword.pos.line,
-          mod.tokens.functionKeyword.pos.col,
-          mod.expr.pos.line,
-          mod.expr.pos.col
-        ),
-        Range.create(
-          mod.tokens.name.pos.line,
-          mod.tokens.name.pos.col,
-          mod.tokens.name.end.line,
-          mod.tokens.name.end.col
-        )
-      )
-    );
-  });
-  console.log(symbols);
-  return symbols;
 });
 
 // This handler resolves additional information for the item selected in
