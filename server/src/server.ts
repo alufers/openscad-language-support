@@ -266,6 +266,9 @@ connection.onCompletion((pos: TextDocumentPositionParams): CompletionItem[] => {
         case CompletionType.VARIABLE:
           kind = CompletionItemKind.Variable;
           break;
+        case CompletionType.KEYWORD:
+          kind = CompletionItemKind.Keyword;
+          break;
       }
       return {
         label: s.name,
