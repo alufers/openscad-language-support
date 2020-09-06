@@ -190,7 +190,6 @@ connection.onDidChangeWatchedFiles((_change) => {
 // This handler provides the initial list of the completion items.
 connection.onCompletion(
   async (pos: TextDocumentPositionParams): Promise<CompletionItem[]> => {
-   
     try {
       const document = documents.get(pos.textDocument.uri);
       if (!document) {
@@ -214,8 +213,8 @@ connection.onCompletion(
       if (fullOffset >= text.length) {
         fullOffset = text.length > 0 ? text.length - 1 : 0;
       }
-      console.log("COMPLETION RQ!",)
-      const loc = new CodeLocation(fullOffset
+      console.log("COMPLETION RQ!", + fullOffset);
+      const loc = new CodeLocation(
         solutionFile.ast.pos.file,
         fullOffset,
         pos.position.line,
@@ -223,7 +222,7 @@ connection.onCompletion(
       );
 
       const symbols = await solutionFile.getCompletionsAtLocation(loc);
-      
+
       return symbols.map((s, i) => {
         let kind: CompletionItemKind = CompletionItemKind.Text;
         switch (s.type) {
