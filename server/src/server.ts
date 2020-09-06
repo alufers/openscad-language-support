@@ -1,43 +1,30 @@
 import {
-  createConnection,
-  TextDocuments,
-  Diagnostic,
-  DiagnosticSeverity,
-  ProposedFeatures,
-  InitializeParams,
-  DidChangeConfigurationNotification,
-  CompletionItem,
-  CompletionItemKind,
-  TextDocumentPositionParams,
-  TextDocumentSyncKind,
-  InitializeResult,
-  TextEdit,
-  Range,
-  Position,
-  SymbolKind,
-  DocumentSymbol,
-} from "vscode-languageserver";
-
-import { TextDocument } from "vscode-languageserver-textdocument";
-import {
-  CodeFile,
-  ErrorCollector,
-  Lexer,
-  Token,
-  Parser,
-  FormattingConfiguration,
-  ASTPrinter,
-  ParsingHelper,
+  CodeError,
   CodeLocation,
-  ASTScopePopulator,
-  Scope,
-  CompletionUtil,
   CompletionType,
-  PreludeUtil,
   SolutionManager,
   SymbolKind as ScadSymbolKind,
 } from "openscad-parser";
-import { uriToFilePath } from "vscode-languageserver/lib/files";
+import {
+  CompletionItem,
+  CompletionItemKind,
+  createConnection,
+  Diagnostic,
+  DiagnosticSeverity,
+  DidChangeConfigurationNotification,
+  DocumentSymbol,
+  InitializeParams,
+  InitializeResult,
+  Position,
+  ProposedFeatures,
+  Range,
+  SymbolKind,
+  TextDocumentPositionParams,
+  TextDocuments,
+  TextDocumentSyncKind,
+  TextEdit,
+} from "vscode-languageserver";
+import { TextDocument } from "vscode-languageserver-textdocument";
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -127,9 +114,6 @@ connection.onDidChangeConfiguration((change) => {
       (change.settings.languageServerExample || defaultSettings)
     );
   }
-
-  // Revalidate all open text documents
-  documents.all().forEach(validateScadFile);
 });
 
 function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
@@ -161,57 +145,42 @@ documents.onDidClose((e) => {
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
-documents.onDidChangeContent((change) => {
-  if (!solutionManager.getFile(uriToPath(change.document.uri))) {
-    solutionManager.notifyNewFileOpened(
+documents.onDidChangeContent(async (change) => {
+  const solutionFile = await solutionManager.getFile(
+    uriToPath(change.document.uri)
+  );
+  if (!solutionFile) {
+    await solutionManager.notifyNewFileOpened(
       uriToPath(change.document.uri),
       change.document.getText()
     );
   } else {
-    solutionManager.notifyFileChanged(
+    await solutionManager.notifyFileChanged(
       uriToPath(change.document.uri),
       change.document.getText()
     );
   }
-  validateScadFile(change.document);
+
+  if (solutionFile) {
+    const textDocument = change.document;
+    let diagnostics: Diagnostic[] = [];
+    for (let error of solutionFile.errors as CodeError[]) {
+      let diagnostic: Diagnostic = {
+        severity: DiagnosticSeverity.Error,
+        range: {
+          start: textDocument.positionAt(error.codeLocation.char),
+          end: textDocument.positionAt(error.codeLocation.char),
+        },
+        message: error.message,
+        source: "openscad-language-support",
+      };
+      diagnostics.push(diagnostic);
+    }
+
+    // Send the computed diagnostics to VSCode.
+    connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+  }
 });
-
-async function validateScadFile(textDocument: TextDocument): Promise<void> {
-  // In this simple example we get the settings for every validate run.
-  let settings = await getDocumentSettings(textDocument.uri);
-
-  const file = new CodeFile(textDocument.uri, textDocument.getText());
-  const errorCollector = new ErrorCollector();
-  const lexer = new Lexer(file, errorCollector);
-  let tokens: Token[] = [];
-  try {
-    tokens = lexer.scan();
-  } catch (e) {}
-  let parser, ast;
-  if (!errorCollector.hasErrors()) {
-    try {
-      parser = new Parser(file, tokens, errorCollector);
-      ast = parser.parse();
-    } catch (e) {}
-  }
-  let diagnostics: Diagnostic[] = [];
-
-  for (let error of errorCollector.errors) {
-    let diagnostic: Diagnostic = {
-      severity: DiagnosticSeverity.Error,
-      range: {
-        start: textDocument.positionAt(error.codeLocation.char),
-        end: textDocument.positionAt(error.codeLocation.char),
-      },
-      message: error.message,
-      source: "openscad-language-support",
-    };
-    diagnostics.push(diagnostic);
-  }
-
-  // Send the computed diagnostics to VSCode.
-  connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
-}
 
 connection.onDidChangeWatchedFiles((_change) => {
   // Monitored files have change in VSCode
@@ -219,72 +188,80 @@ connection.onDidChangeWatchedFiles((_change) => {
 });
 
 // This handler provides the initial list of the completion items.
-connection.onCompletion((pos: TextDocumentPositionParams): CompletionItem[] => {
-  try {
-    const document = documents.get(pos.textDocument.uri);
-    if (!document) {
-      throw new Error("No document!");
-    }
-    const text = document.getText();
-    const codeFile = new CodeFile(pos.textDocument.uri, text);
-    const [ast, ec] = ParsingHelper.parseFile(codeFile);
-
-    if (!ast) return []; // lexing failed completely
-    let charsBeforeTheLine = 0;
-    let linesToGo = pos.position.line;
-    while (linesToGo != 0 && charsBeforeTheLine < text.length) {
-      if (text[charsBeforeTheLine] === "\n") {
-        linesToGo--;
+connection.onCompletion(
+  async (pos: TextDocumentPositionParams): Promise<CompletionItem[]> => {
+   
+    try {
+      const document = documents.get(pos.textDocument.uri);
+      if (!document) {
+        throw new Error("No document!");
       }
-      charsBeforeTheLine++;
-    }
-    let fullOffset = charsBeforeTheLine + pos.position.character;
-    if (fullOffset >= text.length) {
-      fullOffset = text.length > 0 ? text.length - 1 : 0;
-    }
-    const loc = new CodeLocation(
-      codeFile,
-      fullOffset,
-      pos.position.line,
-      pos.position.character
-    );
-    const scope = new Scope();
-    scope.siblingScopes.push(PreludeUtil.preludeScope);
-    const populator = new ASTScopePopulator(scope);
-    const astWithScopes = ast.accept(populator);
+      const solutionFile = await solutionManager.getFile(
+        uriToPath(document.uri)
+      );
+      if (!solutionFile || !solutionFile.ast) return [];
 
-    const symbols = CompletionUtil.getSymbolsAtLocation(astWithScopes, loc);
-    return symbols.map((s, i) => {
-      let kind: CompletionItemKind = CompletionItemKind.Text;
-      switch (s.type) {
-        case CompletionType.FUNCTION:
-          kind = CompletionItemKind.Function;
-          break;
-        case CompletionType.MODULE:
-          kind = CompletionItemKind.Module;
-          break;
-        case CompletionType.VARIABLE:
-          kind = CompletionItemKind.Variable;
-          break;
-        case CompletionType.KEYWORD:
-          kind = CompletionItemKind.Keyword;
-          break;
+      const text = document.getText();
+      let charsBeforeTheLine = 0;
+      let linesToGo = pos.position.line;
+      while (linesToGo != 0 && charsBeforeTheLine < text.length) {
+        if (text[charsBeforeTheLine] === "\n") {
+          linesToGo--;
+        }
+        charsBeforeTheLine++;
       }
-      return {
-        label: s.name,
-        kind,
-        data: i + 1,
-      };
-    });
-  } catch (e) {
-    console.log(e);
-    console.log(e.stack);
-    throw e;
+      let fullOffset = charsBeforeTheLine + pos.position.character;
+      if (fullOffset >= text.length) {
+        fullOffset = text.length > 0 ? text.length - 1 : 0;
+      }
+      console.log("COMPLETION RQ!",)
+      const loc = new CodeLocation(fullOffset
+        solutionFile.ast.pos.file,
+        fullOffset,
+        pos.position.line,
+        pos.position.character
+      );
+
+      const symbols = await solutionFile.getCompletionsAtLocation(loc);
+      
+      return symbols.map((s, i) => {
+        let kind: CompletionItemKind = CompletionItemKind.Text;
+        switch (s.type) {
+          case CompletionType.FUNCTION:
+            kind = CompletionItemKind.Function;
+            break;
+          case CompletionType.MODULE:
+            kind = CompletionItemKind.Module;
+            break;
+          case CompletionType.VARIABLE:
+            kind = CompletionItemKind.Variable;
+            break;
+          case CompletionType.KEYWORD:
+            kind = CompletionItemKind.Keyword;
+            break;
+          case CompletionType.DIRECTORY:
+            kind = CompletionItemKind.Folder;
+            break;
+          case CompletionType.FILE:
+            kind = CompletionItemKind.File;
+            break;
+        }
+        return {
+          label: s.name,
+          kind,
+          data: i + 1,
+        };
+      });
+    } catch (e) {
+      console.log(e);
+      console.log(e.stack);
+      throw e;
+    }
   }
-});
+);
 
-connection.onDocumentFormatting((params) => {
-  const f = solutionManager.getFile(uriToPath(params.textDocument.uri));
+connection.onDocumentFormatting(async (params) => {
+  const f = await solutionManager.getFile(uriToPath(params.textDocument.uri));
   if (f.errors.length > 0) {
     return [];
   }
@@ -303,10 +280,13 @@ connection.onDocumentFormatting((params) => {
   ];
 });
 
-connection.onDocumentSymbol((params) => {
-  return solutionManager
-    .getFile(uriToPath(params.textDocument.uri))
-    .getSymbols<DocumentSymbol>(
+connection.onDocumentSymbol(async (params) => {
+  try {
+    const solutionFile = await solutionManager.getFile(
+      uriToPath(params.textDocument.uri)
+    );
+
+    return solutionFile.getSymbols<DocumentSymbol>(
       (name, kind, fullRange, nameRange, children) => {
         let k: SymbolKind;
         switch (kind) {
@@ -336,6 +316,12 @@ connection.onDocumentSymbol((params) => {
         );
       }
     );
+  } catch (e) {
+    console.log(e);
+    console.log(e.stack);
+    console.log("---END OF SYMBOL ERROR---");
+    throw e;
+  }
 });
 
 // This handler resolves additional information for the item selected in
