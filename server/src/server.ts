@@ -213,16 +213,13 @@ connection.onCompletion(
       if (fullOffset >= text.length) {
         fullOffset = text.length > 0 ? text.length - 1 : 0;
       }
-      console.log("COMPLETION RQ!", + fullOffset);
       const loc = new CodeLocation(
         solutionFile.ast.pos.file,
         fullOffset,
         pos.position.line,
         pos.position.character
       );
-
       const symbols = await solutionFile.getCompletionsAtLocation(loc);
-
       return symbols.map((s, i) => {
         let kind: CompletionItemKind = CompletionItemKind.Text;
         switch (s.type) {

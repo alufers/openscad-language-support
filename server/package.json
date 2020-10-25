@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "openscad-parser": "0.0.47",
+    "openscad-parser": "0.0.51",
     "vscode-languageserver": "^6.1.1",
     "vscode-languageserver-textdocument": "^1.0.1"
   }
