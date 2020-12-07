@@ -1,4 +1,6 @@
 import {
+  ASTNode,
+  ASTPinpointer,
   CodeError,
   CodeLocation,
   CompletionType,
@@ -9,12 +11,14 @@ import {
   CompletionItem,
   CompletionItemKind,
   createConnection,
+  DefinitionParams,
   Diagnostic,
   DiagnosticSeverity,
   DidChangeConfigurationNotification,
   DocumentSymbol,
   InitializeParams,
   InitializeResult,
+  Location,
   Position,
   ProposedFeatures,
   Range,
@@ -64,6 +68,7 @@ connection.onInitialize((params: InitializeParams) => {
       completionProvider: {
         resolveProvider: true,
       },
+      definitionProvider: true,
     },
   };
   if (hasWorkspaceFolderCapability) {
@@ -133,6 +138,10 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
 
 function uriToPath(uri: string) {
   return uri.replace(/^file:\/\//, "");
+}
+
+function pathToUri(path: string) {
+  return "file://" + path;
 }
 
 const solutionManager = new SolutionManager();
@@ -319,6 +328,49 @@ connection.onDocumentSymbol(async (params) => {
     throw e;
   }
 });
+
+connection.onDefinition(
+  async (pos: DefinitionParams): Promise<Location | null> => {
+    const document = documents.get(pos.textDocument.uri);
+    if (!document) {
+      throw new Error("No document!");
+    }
+    const solutionFile = await solutionManager.getFile(uriToPath(document.uri));
+    if (!solutionFile || !solutionFile.ast) throw new Error("File not opened.");
+
+    const text = document.getText();
+    let charsBeforeTheLine = 0;
+    let linesToGo = pos.position.line;
+    while (linesToGo != 0 && charsBeforeTheLine < text.length) {
+      if (text[charsBeforeTheLine] === "\n") {
+        linesToGo--;
+      }
+      charsBeforeTheLine++;
+    }
+    let fullOffset = charsBeforeTheLine + pos.position.character;
+    if (fullOffset >= text.length) {
+      fullOffset = text.length > 0 ? text.length - 1 : 0;
+    }
+    const loc = new CodeLocation(
+      solutionFile.ast.pos.file,
+      fullOffset,
+      pos.position.line,
+      pos.position.character
+    );
+    const defLoc = solutionFile.getSymbolDefinition(loc);
+    if (!defLoc) {
+      return null;
+    
+    }
+    return Location.create(
+      pathToUri(defLoc.file.path),
+      Range.create(
+        Position.create(defLoc.line, defLoc.col),
+        Position.create(defLoc.line, defLoc.col)
+      )
+    );
+  }
+);
 
 // This handler resolves additional information for the item selected in
 // the completion list.
