@@ -16,6 +16,8 @@ import {
   DiagnosticSeverity,
   DidChangeConfigurationNotification,
   DocumentSymbol,
+  Hover,
+  HoverParams,
   InitializeParams,
   InitializeResult,
   Location,
@@ -27,8 +29,9 @@ import {
   TextDocuments,
   TextDocumentSyncKind,
   TextEdit,
-} from "vscode-languageserver";
+} from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
+import { pathToUri, posToCodeLocation, uriToPath } from "./util";
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -69,6 +72,7 @@ connection.onInitialize((params: InitializeParams) => {
         resolveProvider: true,
       },
       definitionProvider: true,
+      hoverProvider: true
     },
   };
   if (hasWorkspaceFolderCapability) {
@@ -134,14 +138,6 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
     documentSettings.set(resource, result);
   }
   return result;
-}
-
-function uriToPath(uri: string) {
-  return uri.replace(/^file:\/\//, "");
-}
-
-function pathToUri(path: string) {
-  return "file://" + path;
 }
 
 const solutionManager = new SolutionManager();
@@ -357,10 +353,9 @@ connection.onDefinition(
       pos.position.line,
       pos.position.character
     );
-    const defLoc = solutionFile.getSymbolDefinition(loc);
+    const defLoc = solutionFile.getSymbolDeclarationLocation(loc);
     if (!defLoc) {
       return null;
-    
     }
     return Location.create(
       pathToUri(defLoc.file.path),
@@ -369,6 +364,30 @@ connection.onDefinition(
         Position.create(defLoc.line, defLoc.col)
       )
     );
+  }
+);
+
+connection.onHover(
+  async (hov: HoverParams): Promise<Hover> => {
+    const [loc, sf] = await posToCodeLocation(solutionManager, hov, documents);
+    if (!loc) {
+      return {
+        contents: "",
+      };
+    }
+    const decl = sf.getSymbolDeclaration(loc);
+    if (!decl) {
+      return {
+        contents: "",
+      };
+    }
+
+    return {
+      contents: {
+        kind: "markdown",
+        value: decl.docComment.documentationContent,
+      },
+    };
   }
 );
 
