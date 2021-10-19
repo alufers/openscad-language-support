@@ -1,9 +1,15 @@
 import {
+  AssignmentNode,
   ASTNode,
   ASTPinpointer,
+  ASTPrinter,
   CodeError,
   CodeLocation,
   CompletionType,
+  FormattingConfiguration,
+  FunctionDeclarationStmt,
+  ModuleDeclarationStmt,
+  SeeAnnotation,
   SolutionManager,
   SymbolKind as ScadSymbolKind,
 } from "openscad-parser";
@@ -21,6 +27,7 @@ import {
   InitializeParams,
   InitializeResult,
   Location,
+  MarkupContent,
   Position,
   ProposedFeatures,
   Range,
@@ -32,6 +39,7 @@ import {
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { pathToUri, posToCodeLocation, uriToPath } from "./util";
+import { URL } from "url";
 
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -72,7 +80,7 @@ connection.onInitialize((params: InitializeParams) => {
         resolveProvider: true,
       },
       definitionProvider: true,
-      hoverProvider: true
+      hoverProvider: true,
     },
   };
   if (hasWorkspaceFolderCapability) {
@@ -225,6 +233,7 @@ connection.onCompletion(
         pos.position.character
       );
       const symbols = await solutionFile.getCompletionsAtLocation(loc);
+      let docs: MarkupContent;
       return symbols.map((s, i) => {
         let kind: CompletionItemKind = CompletionItemKind.Text;
         switch (s.type) {
@@ -249,11 +258,12 @@ connection.onCompletion(
         }
         return {
           label: s.name,
+
           kind,
           data: i + 1,
         };
       });
-    } catch (e) {
+    } catch (e: any) {
       console.log(e);
       console.log(e.stack);
       throw e;
@@ -317,7 +327,7 @@ connection.onDocumentSymbol(async (params) => {
         );
       }
     );
-  } catch (e) {
+  } catch (e: any) {
     console.log(e);
     console.log(e.stack);
     console.log("---END OF SYMBOL ERROR---");
@@ -367,44 +377,74 @@ connection.onDefinition(
   }
 );
 
-connection.onHover(
-  async (hov: HoverParams): Promise<Hover> => {
-    const [loc, sf] = await posToCodeLocation(solutionManager, hov, documents);
-    if (!loc) {
-      return {
-        contents: "",
-      };
-    }
-    const decl = sf.getSymbolDeclaration(loc);
-    if (!decl) {
-      return {
-        contents: "",
-      };
-    }
+function declToMarkupDocs(
+  decl: AssignmentNode | ModuleDeclarationStmt | FunctionDeclarationStmt
+): MarkupContent {
+  let contents = "";
+  const cfg = new FormattingConfiguration();
+  cfg.definitionsOnly = true;
+  const printer = new ASTPrinter(cfg);
 
+  if (decl) {
+    contents += "```scad\n" + decl.accept(printer).trim() + "\n```\n---\n";
+  }
+  if (decl?.docComment) {
+    contents += decl.docComment.documentationContent;
+    const seeAnnotations = decl.docComment.annotations.filter(
+      (a) => a instanceof SeeAnnotation
+    ) as SeeAnnotation[];
+
+    for (let seeAnnotation of seeAnnotations) {
+      try {
+        let url = new URL(seeAnnotation.link);
+        if (url.hostname.endsWith("wikipedia.org")) {
+          contents += `\n [See more on **Wikipedia**](${seeAnnotation.link})`;
+        } else if (
+          url.hostname.endsWith("wikibooks.org") &&
+          url.pathname.startsWith("/wiki/OpenSCAD_User_Manual")
+        ) {
+          contents += `\n\n [See more on the **OpenSCAD User Manual**](${seeAnnotation.link})`;
+        } else {
+          contents += `\n **See also**: [${seeAnnotation.link}](${seeAnnotation.link})`;
+        }
+      } catch (e) {
+        contents += `"\n **See also**: ${seeAnnotation.link}`;
+      }
+    }
+  }
+  return {
+    kind: "markdown",
+    value: contents,
+  };
+}
+
+connection.onHover(async (hov: HoverParams): Promise<Hover> => {
+  const [loc, sf] = await posToCodeLocation(solutionManager, hov, documents);
+  if (!loc) {
     return {
-      contents: {
-        kind: "markdown",
-        value: decl.docComment.documentationContent,
-      },
+      contents: "",
     };
   }
-);
+
+  const decl = sf.getSymbolDeclaration(loc);
+
+  return {
+    contents: declToMarkupDocs(decl),
+  };
+});
 
 // This handler resolves additional information for the item selected in
 // the completion list.
-connection.onCompletionResolve(
-  (item: CompletionItem): CompletionItem => {
-    if (item.data === 1) {
-      item.detail = "module";
-      item.documentation = "A module";
-    } else if (item.data === 2) {
-      item.detail = "function";
-      item.documentation = "A function";
-    }
-    return item;
+connection.onCompletionResolve((item: CompletionItem): CompletionItem => {
+  if (item.data === 1) {
+    item.detail = "module";
+    item.documentation = "A module";
+  } else if (item.data === 2) {
+    item.detail = "function";
+    item.documentation = "A function";
   }
-);
+  return item;
+});
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events
