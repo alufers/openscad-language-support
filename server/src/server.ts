@@ -9,6 +9,7 @@ import {
   FormattingConfiguration,
   FunctionDeclarationStmt,
   ModuleDeclarationStmt,
+  ParamAnnotation,
   SeeAnnotation,
   SolutionManager,
   SymbolKind as ScadSymbolKind,
@@ -238,12 +239,21 @@ connection.onCompletion(
         let kind: CompletionItemKind = CompletionItemKind.Text;
         switch (s.type) {
           case CompletionType.FUNCTION:
+            if (s.decl) {
+              docs = declToMarkupDocs(s.decl);
+            }
             kind = CompletionItemKind.Function;
             break;
           case CompletionType.MODULE:
+            if (s.decl) {
+              docs = declToMarkupDocs(s.decl);
+            }
             kind = CompletionItemKind.Module;
             break;
           case CompletionType.VARIABLE:
+            if (s.decl) {
+              docs = declToMarkupDocs(s.decl);
+            }
             kind = CompletionItemKind.Variable;
             break;
           case CompletionType.KEYWORD:
@@ -258,7 +268,7 @@ connection.onCompletion(
         }
         return {
           label: s.name,
-
+          documentation: docs,
           kind,
           data: i + 1,
         };
@@ -390,6 +400,23 @@ function declToMarkupDocs(
   }
   if (decl?.docComment) {
     contents += decl.docComment.documentationContent;
+    const paramAnnotations = decl.docComment.annotations.filter(
+      (a) => a instanceof ParamAnnotation
+    ) as ParamAnnotation[];
+    if (paramAnnotations.length > 0) {
+      contents += "\n\n\n\nParameters:\n";
+      for (const param of paramAnnotations) {
+        let label = "";
+        if (param.tags.positional) {
+          label = ` *positional*`
+        }
+        if (param.tags.named) {
+          label = ` *named*`
+        }
+        contents += `\n* **\`${param.link}\`**${label} (${param.tags?.type?.join(", ")}): ${param.description}`;
+      }
+    }
+
     const seeAnnotations = decl.docComment.annotations.filter(
       (a) => a instanceof SeeAnnotation
     ) as SeeAnnotation[];
@@ -398,7 +425,7 @@ function declToMarkupDocs(
       try {
         let url = new URL(seeAnnotation.link);
         if (url.hostname.endsWith("wikipedia.org")) {
-          contents += `\n [See more on **Wikipedia**](${seeAnnotation.link})`;
+          contents += `\n\n [See more on **Wikipedia**](${seeAnnotation.link})`;
         } else if (
           url.hostname.endsWith("wikibooks.org") &&
           url.pathname.startsWith("/wiki/OpenSCAD_User_Manual")
@@ -408,7 +435,7 @@ function declToMarkupDocs(
           contents += `\n **See also**: [${seeAnnotation.link}](${seeAnnotation.link})`;
         }
       } catch (e) {
-        contents += `"\n **See also**: ${seeAnnotation.link}`;
+        contents += `\n\n **See also**: ${seeAnnotation.link}`;
       }
     }
   }
