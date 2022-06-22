@@ -283,6 +283,9 @@ connection.onCompletion(
 
 connection.onDocumentFormatting(async (params) => {
   const f = await solutionManager.getFile(uriToPath(params.textDocument.uri));
+  if(!f) {
+    throw new Error("No file!");
+  }
   if (f.errors.length > 0) {
     return [];
   }
@@ -306,6 +309,9 @@ connection.onDocumentSymbol(async (params) => {
     const solutionFile = await solutionManager.getFile(
       uriToPath(params.textDocument.uri)
     );
+   if(!solutionFile) {
+    throw new Error("No file!");
+   }
 
     return solutionFile.getSymbols<DocumentSymbol>(
       (name, kind, fullRange, nameRange, children) => {
@@ -374,7 +380,7 @@ connection.onDefinition(
       pos.position.character
     );
     const defLoc = solutionFile.getSymbolDeclarationLocation(loc);
-    if (!defLoc) {
+    if (!defLoc || !defLoc.file) {
       return null;
     }
     return Location.create(
@@ -454,7 +460,11 @@ connection.onHover(async (hov: HoverParams): Promise<Hover> => {
   }
 
   const decl = sf.getSymbolDeclaration(loc);
-
+  if(!decl) {
+    return {
+      contents: "<unknown>",
+    }
+  }
   return {
     contents: declToMarkupDocs(decl),
   };
